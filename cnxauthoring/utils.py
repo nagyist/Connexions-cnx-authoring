@@ -19,9 +19,10 @@ except ImportError:
     import urllib.parse as urlparse # renamed in python3
 
 import cnxepub
+import requests
+from pyramid.threadlocal import get_current_registry
 from cnxquerygrammar.query_parser import grammar, DictFormater
 from parsimonious.exceptions import IncompleteParseError
-import requests
 
 
 def utf8(item):
@@ -322,5 +323,78 @@ def accept_roles_and_license(request, document, uid):
             }
     response = requests.post(license_url, data=json.dumps(payload),
             headers=headers)
+    if response.status_code != 202:
+        raise PublishingError(response)
+
+
+PUBLISHING_ROLES_MAPPING = {
+    'Author': 'authors',
+    'Copyright Holder': 'licensors',
+    'Editor': 'editors',
+    'Illustrator': 'illustrators',
+    'Publisher': 'publishers',
+    'Translator': 'translators',
+    }
+
+
+def declare_roles(model):
+    """Annotate the roles to include role acceptance information.
+    The model is updated as part of this procedure, but it is not persisted.
+    """
+    from .models import PublishingError
+
+    settings = get_current_registry().settings
+    publishing_url = settings['publishing.url']
+    headers = {
+        'x-api-key': settings['publishing.api_key'],
+        'content-type': 'application/json',
+        }
+    url = urlparse.urljoin(publishing_url,
+                           '/contents/{}/roles'.format(model.id))
+
+    # Acquire a list of known roles from publishing.
+    response = requests.get(url)
+    upstream_roles = response.json()
+
+    # Compare upstream and mark entities for update.
+    tobe_updated = set([])
+    for role_entity in upstream_roles:
+        uid = role_entity['uid']
+        type_ = PUBLISHING_ROLES_MAPPING[role_entity['role']]
+        has_accepted = role_entity['has_accepted']
+        # Note, a role cannot be added or accepted through publishing.
+        #   This content will become out-of-sync if content is managed,
+        #   by another system other than authoring.
+        try:
+            role, index = [(r, i,)
+                           for i, r in enumerate(model.metadata[type_])
+                           if r['id'] == uid][0]
+        except IndexError:
+            # Doesn't exist locally... Out of sync!
+            raise  # TODO
+        # FIXME 'has_accepted' isn't worked into authoring yet,
+        #       but this will need adjusted to role['has_accepted']
+        if has_accepted != role.get('has_accepted'):
+            # Mark the role for update.
+            tobe_updated.add((uid, type_, role.get('has_accepted'),))
+
+    # Look for roles that have not yet been pushed upstream.
+    local_roles = []
+    for role_type in PUBLISHING_ROLES_MAPPING.values():
+        # FIXME 'has_accepted' isn't worked into authoring yet,
+        #       but this will need adjusted to r['has_accepted']
+        local_roles.extend([(r['id'], role_type, r.get('has_accepted'),)
+                            for r in model.metadata[role_type]])
+    for new_role in set(upstream_roles).symmetric_difference(set(local_roles)):
+        tobe_updated.add(new_role)
+
+    # Project and/or accept roles into publishing.
+    _roles_mapping = {v: k for k, v in PUBLISHING_ROLES_MAPPING.items()}
+    role_submission_keys = ('uid', 'role', 'has_accepted',)
+    payload = [dict(zip(role_submission_keys,
+                        (r[0], _roles_mapping[r[1]], r[2],)))
+               for r in tobe_updated]
+    response = requests.post(url, data=json.dumps(payload),
+                             headers=headers)
     if response.status_code != 202:
         raise PublishingError(response)
