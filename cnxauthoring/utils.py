@@ -398,3 +398,63 @@ def declare_roles(model):
                              headers=headers)
     if response.status_code != 202:
         raise PublishingError(response)
+
+
+def declare_licensors(model):
+    """Declare license acceptance information on the model.
+    The model is updated as part of this procedure, but it is not persisted.
+    """
+    from .models import PublishingError
+
+    settings = get_current_registry().settings
+    publishing_url = settings['publishing.url']
+    headers = {
+        'x-api-key': settings['publishing.api_key'],
+        'content-type': 'application/json',
+        }
+    url = urlparse.urljoin(publishing_url,
+                           '/contents/{}/licensors'.format(model.id))
+
+    # Acquire a list of known roles from publishing.
+    response = requests.get(url)
+    upstream_license_info = response.json()
+    upstream = upstream_license_info.get('licensors', [])
+
+    # Compare upstream and mark entities for update.
+    tobe_updated = set([])
+    for entity in upstream:
+        uid = entity['uid']
+        has_accepted = entity['has_accepted']
+        # Note, a licensor cannot be added or accepted through publishing.
+        #   This content will become out-of-sync if content is managed,
+        #   by another system other than authoring.
+        try:
+            _, index = [(rec, i,)
+                           for i, rec in enumerate(model.licensor_acceptance)
+                           if rec['id'] == uid][0]
+        except IndexError:
+            # Doesn't exist locally... Out of sync!
+            raise  # TODO
+        if has_accepted != entity['has_accepted']:
+            # Mark the role for update.
+            tobe_updated.add((uid, entity['has_accepted'],))
+
+    # Look for licensors that have not yet been pushed upstream.
+    # FIXME 'has_accepted' isn't worked into authoring yet,
+    #       but this will need adjusted to r['has_accepted']
+    local = [(r['id'], r.get('has_accepted'),)
+             for r in model.licensor_acceptance]
+    for new_licensor in set(upstream).symmetric_difference(set(local)):
+        tobe_updated.add(new_licensor)
+
+    # Project and/or accept licensors into publishing.
+    submission_keys = ('uid', 'has_accepted',)
+    payload = {
+        'license_url': model.metadata['license'].url,
+        'licensors': [dict(zip(submission_keys, x))
+                      for x in tobe_updated],
+        }
+    response = requests.post(url, data=json.dumps(payload),
+                             headers=headers)
+    if response.status_code != 202:
+        raise PublishingError(response)
