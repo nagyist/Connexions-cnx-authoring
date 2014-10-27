@@ -348,7 +348,10 @@ def declare_roles(model):
 
     # Acquire a list of known roles from publishing.
     response = requests.get(url)
-    upstream_roles = response.json()
+    if response.status_code >= 400:
+        upstream_roles = []
+    else:
+        upstream_roles = response.json()
 
     # Compare upstream and mark entities for update.
     tobe_updated = set([])
@@ -415,7 +418,13 @@ def declare_licensors(model):
 
     # Acquire a list of known roles from publishing.
     response = requests.get(url)
-    upstream_license_info = response.json()
+    if response.status_code >= 400:
+        upstream_license_info = {
+            'license_url': None,
+            'licensors': [],
+            }
+    else:
+        upstream_license_info = response.json()
     upstream = upstream_license_info.get('licensors', [])
 
     # Compare upstream and mark entities for update.
