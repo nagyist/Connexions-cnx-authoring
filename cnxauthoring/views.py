@@ -23,7 +23,7 @@ from pyramid import httpexceptions
 import requests
 from openstax_accounts.interfaces import *
 
-from cnxepub.models import flatten_to_documents
+from cnxepub.models import ATTRIBUTED_ROLE_KEYS, flatten_to_documents
 from .models import (create_content, derive_content, revise_content,
         Document, Binder, Resource, BINDER_MEDIATYPE, DOCUMENT_MEDIATYPE,
         DocumentNotFoundError)
@@ -141,7 +141,7 @@ def user_contents(request):
     if kwargs:
         utils.change_dict_keys(kwargs, utils.camelcase_to_underscore)
     contents = storage.get_all(user_id=request.unauthenticated_userid,
-                               permissions=('edit',), **kwargs)
+                               permissions=('edit', 'view',), **kwargs)
     for content in contents:
         update_content_state(request, content)
         if isinstance(content,Binder):
@@ -276,8 +276,8 @@ def post_content_single(request, cstruct):
         # new content, need to create acl entry in publishing
         utils.create_acl_for(request, content, uids)
     # accept roles and license
-    utils.accept_roles_and_license(
-            request, content, request.unauthenticated_userid)
+    utils.declare_roles(content)
+    utils.declare_licensors(content)
     # get acl entry from publishing
     utils.get_acl_for(request, content)
 
@@ -568,3 +568,108 @@ def publish(request):
         raise httpexceptions.HTTPBadRequest('Unable to publish: '
                 'response body: {}'.format(response.content.decode('utf-8')))
 
+
+@view_config(route_name='acceptance-info', request_method='GET',
+             renderer='json')
+@authenticated_only
+def get_acceptance_info(request):
+    """Retrieve role and license acceptance info
+    on the routed content for the authenticated user.
+    """
+    content_id = request.matchdict['id']
+    user_id = request.authenticated_userid
+    content = storage.get(id=content_id)
+
+    if content is None:
+        raise httpexceptions.HTTPNotFound()
+    elif not request.has_permission('view', content):
+        raise httpexceptions.HTTPForbidden(
+            'You do not have permission to view {}'.format(content_id))
+
+    tobe_accepted_roles = []
+    for role_key in ATTRIBUTED_ROLE_KEYS:
+        try:
+            roles = content.metadata[role_key]
+        except KeyError:
+            continue
+        for role in roles:
+            has_accepted = role.get('hasAccepted', None)
+            if role['id'] == user_id and has_accepted in (None, False,):
+                tobe_accepted_roles.add((role_type, has_accepted,))
+
+    roles = [zip(('role', 'hasAccepted',), role)
+             for role in tobe_accepted_roles]
+    info = {
+        'license': content.metadata['license'],
+        'roles': roles,
+        'title': content.metadata['title'],
+        'id': content.id,
+        'url': request.route_url('get-content-json', id=content.id),
+        }
+
+    resp = request.response
+    resp.status = 200
+    return info
+
+
+@view_config(route_name='acceptance-info', request_method='POST')
+@authenticated_only
+def post_acceptance_info(request):
+    """Post role and license acceptance info
+    on the routed content for the authenticated user.
+
+    This should receive JSON in the format::
+
+    {'license': <true|false>,
+     'roles': [{'role': <str>, 'hasAccepted': <true|false>}, ...]}
+
+    """
+    content_id = request.matchdict['id']
+    user_id = request.authenticated_userid
+    content = storage.get(id=content_id)
+
+    if content is None:
+        raise httpexceptions.HTTPNotFound()
+    elif not request.has_permission('view', content):
+        raise httpexceptions.HTTPForbidden(
+            'You do not have permission to view {}'.format(content_id))
+
+    try:
+        cstruct = request.json_body
+    except (TypeError, ValueError):
+        raise httpexceptions.HTTPBadRequest('Invalid JSON')
+
+    schema = AcceptanceSchema()
+    try:
+        appstruct = schema.bind().deserialize(cstruct)
+    except Exception as e:
+        raise httpexceptions.HTTPBadRequest(body=json.dumps(e.asdict()))
+
+    # Mark the license acceptance.
+    has_accepted_license = appstruct.get('license')
+    if not has_accepted_license:
+        raise httpexceptions.HTTPBadRequest('Must accept the license')
+    for licensor in content.licensor_acceptance:
+        if licensor['id'] == user_id:
+            licensor['has_accepted'] = True
+
+    # Find and mark the roles as accepted.
+    for role_key in ATTRIBUTED_ROLE_KEYS:
+        try:
+            roles = content.metadata[role_key]
+        except KeyError:
+            continue
+        for i, role in enumerate(roles):
+            has_accepted = role.get('hasAccepted', None)
+            if role['id'] == user_id and has_accepted in (None, False,):
+                tobe_accepted_roles.add((role_type, has_accepted, i,))
+
+    for role_type, has_accepted, index in tobe_accepted_roles:        
+        content.metadata[role_type][index]['has_accepted'] = has_accepted
+    if tobe_accepted_roles:
+        storage.update(content)
+        storage.persist()
+
+    resp = request.response
+    resp.status = 200
+    return resp
