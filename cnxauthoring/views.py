@@ -598,11 +598,11 @@ def get_acceptance_info(request):
         except KeyError:
             continue
         for role in roles:
-            has_accepted = role.get('hasAccepted', None)
+            has_accepted = role.get('has_accepted', None)
             if role['id'] == user_id and has_accepted in (None, False,):
                 tobe_accepted_roles.add((role_type, has_accepted,))
 
-    roles = [zip(('role', 'hasAccepted',), role)
+    roles = [zip(('role', 'has_accepted',), role)
              for role in tobe_accepted_roles]
     info = {
         'license': content.metadata['license'],
@@ -645,6 +645,7 @@ def post_acceptance_info(request):
         raise httpexceptions.HTTPBadRequest('Invalid JSON')
 
     schema = AcceptanceSchema()
+    utils.change_dict_keys(cstruct, utils.camelcase_to_underscore)
     try:
         appstruct = schema.bind().deserialize(cstruct)
     except Exception as e:
@@ -665,7 +666,7 @@ def post_acceptance_info(request):
         except KeyError:
             continue
         for i, role in enumerate(roles):
-            has_accepted = role.get('hasAccepted', None)
+            has_accepted = role.get('has_accepted', None)
             if role['id'] == user_id and has_accepted in (None, False,):
                 tobe_accepted_roles.add((role_type, has_accepted, i,))
 
