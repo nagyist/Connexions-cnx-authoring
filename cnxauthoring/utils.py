@@ -366,8 +366,6 @@ def declare_roles(model):
         except IndexError:
             # Doesn't exist locally... Out of sync!
             raise  # TODO
-        # FIXME 'has_accepted' isn't worked into authoring yet,
-        #       but this will need adjusted to role['has_accepted']
         if has_accepted != role.get('has_accepted'):
             # Mark the role for update.
             tobe_updated.add((uid, type_, role.get('has_accepted'),))
@@ -379,6 +377,11 @@ def declare_roles(model):
         #       but this will need adjusted to r['has_accepted']
         local_roles.extend([(r['id'], role_type, r.get('has_accepted'),)
                             for r in model.metadata[role_type]])
+
+    upstream_roles = [
+        (r['uid'], PUBLISHING_ROLES_MAPPING[r['role']], r['has_accepted'])
+        for r in upstream_roles]
+
     for new_role in set(upstream_roles).symmetric_difference(set(local_roles)):
         tobe_updated.add(new_role)
 
@@ -442,6 +445,7 @@ def declare_licensors(model):
     # Look for licensors that have not yet been pushed upstream.
     local = [(r['id'], r['has_accepted'],)
              for r in model.licensor_acceptance]
+    upstream = [(r['uid'], r['has_accepted'],) for r in upstream]
     for new_licensor in set(upstream).symmetric_difference(set(local)):
         tobe_updated.add(new_licensor)
 
