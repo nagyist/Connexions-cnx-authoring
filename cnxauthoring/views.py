@@ -108,15 +108,15 @@ def profile(request):
     return UserSchema().bind().deserialize(
             utils.profile_to_user_dict(request.user))
 
+
 def update_content_state(request, content):
     """Updates content state if it is non-terminal by checking w/ publishing service"""
     if (content.metadata['state'] not in [None, 'Done/Success'] and
             content.metadata['publication']):
         publishing_url = request.registry.settings['publishing.url']
-        if not publishing_url.endswith('/'):
-            publishing_url = publishing_url + '/'
-        response = requests.get(urlparse.urljoin(
-            publishing_url, content.metadata['publication']))
+        url = urlparse.urljoin(publishing_url, 'publications',
+                               content.metadata['publication'])
+        response = requests.get(url)
         if response.status_code == 200:
             try:
                 result = json.loads(response.content.decode('utf-8'))
@@ -520,9 +520,8 @@ def post_to_publishing(request, userid, submitlog, content_ids):
     is a list, starting with the binderid, and following with documentid of each
     draft page to publish. As a degenerate case, it may be a single list of this
     format. In addition to binder lists, the top level list may contain document
-    ids - these will be published as a 'looseleaf' set of pages."""
-
-    publishing_url = request.registry.settings['publishing.url']
+    ids - these will be published as a 'looseleaf' set of pages.
+    """
     filename = 'contents.epub'
     contents = []
     for content_id_item in content_ids:
@@ -554,13 +553,16 @@ def post_to_publishing(request, userid, submitlog, content_ids):
 
         contents.append(content)
 
+    # Post an epub to publishing.
     upload_data = utils.build_epub(contents, userid, submitlog)
     files = {
         'epub': (filename, upload_data.read(), 'application/epub+zip'),
         }
     api_key = request.registry.settings['publishing.api_key']
+    publishing_url = request.registry.settings['publishing.url']
+    url = urlparse.urljoin(publishing_url, 'publications')
     headers = {'x-api-key': api_key}
-    return contents, requests.post(publishing_url, files=files, headers=headers)
+    return contents, requests.post(url, files=files, headers=headers)
 
 
 @view_config(route_name='publish', request_method='POST', renderer='json')
