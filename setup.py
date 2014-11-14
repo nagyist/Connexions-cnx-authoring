@@ -33,6 +33,7 @@ setup(
         tests_require=tests_require,
         package_data={
             'cnxauthoring.storage': ['sql/*.sql', 'sql/*/*.sql'],
+            'cnxauthoring.tests': ['*.ini'],
             },
         entry_points={
             'paste.app_factory': [

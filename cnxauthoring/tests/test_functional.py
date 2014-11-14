@@ -5,10 +5,6 @@
 # Public License version 3 (AGPLv3).
 # See LICENCE.txt for details.
 # ###
-try:
-    import ConfigParser
-except ImportError:
-    import configparser as ConfigParser
 import datetime
 import json
 import io
@@ -30,7 +26,7 @@ import cnxepub
 import pytz
 from webtest import Upload
 
-from . import test_data
+from .testing import integration_test_settings, test_data
 from ..models import DEFAULT_LICENSE, TZINFO
 
 
@@ -65,6 +61,7 @@ class BaseFunctionalTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        settings = integration_test_settings()
         # only run once for all the tests
 
         # make sure storage is set correctly in cnxauthoring.views by reloading
@@ -73,17 +70,15 @@ class BaseFunctionalTestCase(unittest.TestCase):
             del sys.modules['cnxauthoring.views']
 
         # make sure test db is empty
-        cls.config = ConfigParser.ConfigParser()
-        cls.config.read(['testing.ini'])
-        test_db = cls.config.get('app:main', 'pickle.filename')
+        test_db = settings['pickle.filename']
         try:
             os.remove(test_db)
         except OSError:
             # file doesn't exist
             pass
 
-        import pyramid.paster
-        app = pyramid.paster.get_app('testing.ini')
+        from .. import main
+        app = main({}, **settings)
 
         from webtest import TestApp
         cls.testapp = TestApp(app)
