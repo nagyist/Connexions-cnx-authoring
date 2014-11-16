@@ -26,8 +26,10 @@ import cnxepub
 import pytz
 from pyramid.settings import asbool
 from webtest import Upload
+from wsgi_intercept import requests_intercept
 
 from .testing import integration_test_settings, test_data
+from .intercept import install_intercept, uninstall_intercept
 from ..models import DEFAULT_LICENSE, TZINFO
 
 
@@ -84,20 +86,23 @@ class BaseFunctionalTestCase(unittest.TestCase):
         from webtest import TestApp
         cls.testapp = TestApp(app)
 
+        if asbool(settings.get('testing.mock_cnx_services', True)):
+            install_intercept()
+            requests_intercept.install()
+
     @classmethod
     def tearDownClass(cls):
         from ..storage import storage
         if hasattr(storage, 'conn'):
             storage.conn.close()
+        if asbool(cls.settings.get('testing.mock_cnx_services', True)):
+            requests_intercept.uninstall()
+            uninstall_intercept()
 
     def setUp(self):
         # All tests start with a login.
         self.login()
         self.addCleanup(self.logout)
-
-        if asbool(self.settings.get('testing.mock_cnx_services', True)):
-            self.mock_archive()
-            self.mock_publishing()
 
     def login(self, username='user1', password='password', login_url='/login',
               headers=None):
@@ -111,54 +116,6 @@ class BaseFunctionalTestCase(unittest.TestCase):
 
     def logout(self):
         self.testapp.get('/logout', status=302)
-
-    def mock_archive(self, return_value=None):
-        response = mock.Mock()
-        response.info = mock.Mock()
-
-        # for derived from
-        def patched_urlopen(url, *args, **kwargs):
-            if return_value:
-                response.read = mock.Mock(
-                        side_effect=io.BytesIO(return_value).read)
-                return response
-            filename = test_data(url.rsplit('/', 1)[-1])
-            if not os.path.exists(filename):
-                raise urllib2.HTTPError(url, 404, 'Not Found', None, None)
-            with open(filename, 'rb') as f:
-                data = f.read()
-                try:
-                    data = data.encode('utf-8')
-                except:
-                    pass
-            response.read = mock.Mock(side_effect=io.BytesIO(data).read)
-            response.info().getheader = mock.Mock(side_effect={
-                'Content-Type': mimetypes.guess_type(url)[0]}.get)
-            return response
-
-        urlopen = urllib2.urlopen
-        urllib2.urlopen = patched_urlopen
-        self.addCleanup(setattr, urllib2, 'urlopen', urlopen)
-
-    def mock_publishing(self):
-        self.mock_create_acl = mock.Mock()
-        self.acl_patch = mock.patch('cnxauthoring.utils.create_acl_for',
-                                    self.mock_create_acl)
-        self.acl_patch.start()
-        self.addCleanup(self.acl_patch.stop)
-
-        self.mock_accept = mock.Mock()
-        self.accept_patch = mock.patch(
-                'cnxauthoring.utils.accept_roles_and_license',
-                self.mock_accept)
-        self.accept_patch.start()
-        self.addCleanup(self.accept_patch.stop)
-
-        self.mock_get_acl = mock.Mock()
-        self.get_acl_patch = mock.patch('cnxauthoring.utils.get_acl_for',
-                                        self.mock_get_acl)
-        self.get_acl_patch.start()
-        self.addCleanup(self.get_acl_patch.stop)
 
     def assert_cors_headers(self, response):
         self.assertEqual(response.headers['Access-Control-Allow-Credentials'],
@@ -2462,30 +2419,6 @@ class FunctionalTests(BaseFunctionalTestCase):
 
 
 class PublicationTests(BaseFunctionalTestCase):
-    # When USE_MOCK_PUBLISHING_SERVICE is set to False, the publication tests
-    # will post directly to the publishing service configured in testing.ini.
-    # It can be used to do some manual integration testing between
-    # cnx-authoring and cnx-publishing.  The response from cnx-publishing will
-    # be printed out as a failure message in the tests.
-    #
-    # USE_MOCK_PUBLISHING_SERVICE should be set to True when not testing
-    # manually
-    USE_MOCK_PUBLISHING_SERVICE = True
-
-    def setUp(self):
-        super(PublicationTests, self).setUp()
-        if not self.USE_MOCK_PUBLISHING_SERVICE:
-            # unmock communications with publishing
-            self.acl_patch.stop()
-            self.accept_patch.stop()
-
-    def tearDown(self):
-        super(PublicationTests, self).tearDown()
-        if not self.USE_MOCK_PUBLISHING_SERVICE:
-            # restart the patches so the clean up step to stop the patches
-            # won't fail
-            self.acl_patch.start()
-            self.accept_patch.start()
 
     def test_publish_401(self):
         self.logout()
