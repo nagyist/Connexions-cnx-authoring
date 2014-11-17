@@ -171,10 +171,10 @@ class TestSingluarRunIntercept(unittest.TestCase):
         resp = requests.get(url)
 
         expected = [
-            {u'uid': u'OpenStaxCollege',
+            {u'uid': u'cnxcap',
              u'uuid': u'c8bdbabc-62b1-4a5f-b291-982ab25756d7',
              u'permission': u'publish'},
-            {u'uid': u'cnxcap',
+            {u'uid': u'OpenStaxCollege',
              u'uuid': u'c8bdbabc-62b1-4a5f-b291-982ab25756d7',
              u'permission': u'publish'}]
         self.assertEqual(resp.json(), expected)
